@@ -52,10 +52,12 @@ You need to get three things, which need to correspond to one another:
 
 Below, we'll use hg19, v13. The easiest is probably to get if from [NCBI](https://www.ncbi.nlm.nih.gov/genome/guide/human/) (last access 2021-02-03).
 
+1.
 
-
-- `GRCh37_latest_genomic.fna.gz`
-- `GRCh37_latest_genomic.fna.gz.fai`
+```
+GRCh37_latest_genomic.fna.gz
+GRCh37_latest_genomic.fna.gz.fai
+```
 
 
 ```bash
@@ -63,8 +65,12 @@ wget https://ftp.ncbi.nlm.nih.gov/refseq/H_sapiens/annotation/GRCh37_latest/refs
 samtools faidx GRCh37_latest_genomic.fna.gz
 ```
 
+2.
 
-- `GRCh37_latest_dbSNP_all.vcf.gz`
+```
+GRCh37_latest_dbSNP_all.vcf.gz
+GRCh37_latest_dbSNP_all.vcf.gz.tbi
+```
 
 
 ```bash
@@ -74,8 +80,13 @@ bgzip -c GRCh37_latest_dbSNP_all.vcf > GRCh37_latest_dbSNP_all.vcf.gz
 tabix -p vcf GRCh37_latest_dbSNP_all.vcf.gz
 ```
 
+3.
 
-- `hg19-p13_annotation.db`, get it from [OSF](https://osf.io) (project ID [7csav](https://osf.io/7csav/))
+```
+hg19-p13_annotation.db
+```
+
+Get it from [OSF](https://osf.io) (project ID [7csav](https://osf.io/7csav/)); here is how we created it:
 
 
 ```bash
