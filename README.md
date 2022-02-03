@@ -47,43 +47,37 @@ nextflow run workflow/main.nf --input input.csv --results designs
 You need to get three things, which need to correspond to one another:
 
 1. reference genome
-2. annotation
-3. SNPs
+2. SNPs
+3. annotation
 
-Below, we'll use hg19, v13. The easiest is probably to get if from [NCBI](https://www.ncbi.nlm.nih.gov/genome/guide/human/) (last access 2021-02-03).
-
-1.
-
-```
-GRCh37_latest_genomic.fna.gz
-GRCh37_latest_genomic.fna.gz.fai
-```
+Below, we'll use the files corresponding to the human genome `hg19` (v13, [NCBI](https://www.ncbi.nlm.nih.gov/genome/guide/human/), last access 2021-02-03).
 
 
 ```bash
+# 1. Reference genome and index for random access:
+# - GRCh37_latest_genomic.fna.gz
+# - GRCh37_latest_genomic.fna.gz.fai
+
 wget https://ftp.ncbi.nlm.nih.gov/refseq/H_sapiens/annotation/GRCh37_latest/refseq_identifiers/GRCh37_latest_genomic.fna.gz
 samtools faidx GRCh37_latest_genomic.fna.gz
 ```
 
-2.
-
-```
-GRCh37_latest_dbSNP_all.vcf.gz
-GRCh37_latest_dbSNP_all.vcf.gz.tbi
-```
-
 
 ```bash
+# 2. Variants and index:
+# - GRCh37_latest_dbSNP_all.vcf.gz
+# - GRCh37_latest_dbSNP_all.vcf.gz.tbi
+
 wget https://ftp.ncbi.nlm.nih.gov/refseq/H_sapiens/annotation/GRCh37_latest/refseq_identifiers/GRCh37_latest_dbSNP_all.vcf.gz
 gunip GRCh37_latest_dbSNP_all.vcf.gz
 bgzip -c GRCh37_latest_dbSNP_all.vcf > GRCh37_latest_dbSNP_all.vcf.gz
 tabix -p vcf GRCh37_latest_dbSNP_all.vcf.gz
 ```
 
-3.
 
-```
-hg19-p13_annotation.db
+```bash
+# 3. Annotation database:
+# - hg19-p13_annotation.db
 ```
 
 Get it from [OSF](https://osf.io) (project ID [7csav](https://osf.io/7csav/)); here is how we created it:
