@@ -13,12 +13,6 @@ workflow {
     // We don't pass various files as channels bc/ they all have indices which
     // we'd have to otherwise pass explicitly.
     // https://github.com/nextflow-io/hack17-varcall/issues/1
-    // chh = ch.combine(channel.fromPath(params.settings))
-    //         .combine([params.reference])
-    //         .combine([params.annotation])
-    //         .combine([params.variation]).view()
-
-
     chh = ch.combine(channel.fromPath(params.settings))
             .combine([params.data])
             .view()

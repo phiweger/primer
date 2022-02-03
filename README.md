@@ -21,7 +21,13 @@ The workflow will:
 
 ```bash
 conda install -y -n primer -c bioconda nextflow && conda activate primer
+git clone https://github.com/phiweger/primer && cd primer
+mkdir data
+# ^ add data in there, see below
 ```
+
+Then set the absolute (!) path to the data in `nextflow.config`. If you use other reference genomes/ annotations/ variant databases, you also have to adjust the filenames in `config.json`.
+
 
 
 ## Run
@@ -32,7 +38,7 @@ cat input.csv
 # ABCA4_v1,PCR,NM_000350.3:c.4234C>T
 # ABCA4_v2,PCR,NM_000350.3:c.4773+3A>G
 
-nextflow run main.nf --input input.csv
+nextflow run workflow/main.nf --input input.csv --results designs
 ```
 
 
@@ -44,7 +50,7 @@ You need to get three things, which need to correspond to one another:
 2. annotation
 3. SNPs
 
-Below, we'll use hg19, v13. The easiest is probably to get if from [NCBI](https://www.ncbi.nlm.nih.gov/genome/guide/human/).
+Below, we'll use hg19, v13. The easiest is probably to get if from [NCBI](https://www.ncbi.nlm.nih.gov/genome/guide/human/) (last access 2021-02-03).
 
 
 
@@ -73,7 +79,6 @@ tabix -p vcf GRCh37_latest_dbSNP_all.vcf.gz
 
 
 ```bash
-# last access 2021-02-03
 wget https://ftp.ncbi.nlm.nih.gov/refseq/H_sapiens/annotation/GRCh37_latest/refseq_identifiers/GRCh37_latest_genomic.gff.gz
 gunzip GRCh37_latest_genomic.gff.gz
 # switch to Python
@@ -103,4 +108,4 @@ db['exon-NR_024540.1-3']
 For future reference, below are documented some peculiarities:
 
 - `gffutils.FeatureDB` will not accept symlinks; this means we cannot pass the database in a `nextflow` channel. 
-
+- There are two files with parameters, one for `nextflow` (`nextflow.config`) and one to guide the primer design (`config.json`). There are more elegant solutions, but meh.
