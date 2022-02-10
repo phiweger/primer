@@ -1,5 +1,5 @@
 {
-    "reference": "GRCh37_latest_genomic.fna.gz",
+    "reference": "GRCh37_latest_genomic.fna",
     "annotation": "hg19-p13_annotation.db",
     "variation": "GRCh37_latest_dbSNP_all.vcf.gz",
     "n_return": 5,

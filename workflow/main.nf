@@ -1,7 +1,7 @@
 nextflow.enable.dsl = 2
 
 
-include { design; pcr; pseudo; blast; cat} from './processes'
+include { design; pcr; pseudo; cat} from './processes'
 
 
 workflow {
