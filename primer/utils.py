@@ -274,3 +274,38 @@ def design_primers(method, params, masked):
 def log(message):
     now = datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
     return f'[{now}]\t{message}'
+
+
+def parse_design(design, n, pname, g_pos, chromosome, masked):
+    
+    primers = {}
+    for i in range(n):
+        
+        fwd_start, fwd_len = design[f'PRIMER_LEFT_{i}']
+        rev_start, rev_len = design[f'PRIMER_RIGHT_{i}']
+        
+        # c .. candidate
+        primers[f'{pname}::c{i}'] = {
+            'fwd': {
+                'start': fwd_start,
+                'end': fwd_start + fwd_len,
+                # 'sanity': template[fwd_start:fwd_start + fwd_len],
+                'sequence': design[f'PRIMER_LEFT_{i}_SEQUENCE'],
+                'Tm': round(design[f'PRIMER_LEFT_{i}_TM'], 2),
+            },
+            'rev': {
+                # That Python 0-based, end-exclusive indexing thing ...
+                'start': rev_start - rev_len + 1,
+                'end': rev_start + 1,
+                # 'sanity': rc(template[rev_start - rev_len + 1:rev_start + 1]),
+                'sequence': design[f'PRIMER_RIGHT_{i}_SEQUENCE'],
+                'Tm': round(design[f'PRIMER_RIGHT_{i}_TM'], 2),
+            },
+            'insert': design[f'PRIMER_PAIR_{i}_PRODUCT_SIZE'],
+            'template': masked,
+            'penalty': round(design[f'PRIMER_PAIR_{i}_PENALTY'], 4),
+            'chromosome': chromosome,
+            'genomic_position': g_pos,
+        }
+
+    return primers

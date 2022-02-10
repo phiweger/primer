@@ -2,7 +2,9 @@
 
 
 from collections import defaultdict
+import csv
 import json
+import pdb
 
 import click
 # https://click.palletsprojects.com/en/8.0.x/arguments/
@@ -62,8 +64,6 @@ def validate_primers(candidates, annealing, method, outfile):
     l = []
     header = 'version orientation M13 name from to sequence annealing amplicon snv pseudo comment lid box date'.split(' ')
 
-
-
     for name, coords in regions.items():
        # Accept only ...
        if (len(coords) == 1) and (name in cand.keys()):  
@@ -99,9 +99,18 @@ def validate_primers(candidates, annealing, method, outfile):
 
     # The followign primers do not have secondary alignments
     df = pd.DataFrame.from_records(l, columns=header)
-    sm = smallest_penalty({k: v for k, v in cand.items() if k in set(df.name)})
+
+    # pdb.set_trace()
+
+    round1 = [i for i in set(df.name) if not '-round2' in i]
+    round2 = [i for i in set(df.name) if '-round2' in i]
+
+    sm1 = smallest_penalty({k: v for k, v in cand.items() if k in round1})
+    sm2 = smallest_penalty({k: v for k, v in cand.items() if k in round2})
     
-    df[df['name'] == sm].to_csv(outfile, index=False, sep='\t', header=None)
+    selection = df[(df['name'] == sm1) | (df['name'] == sm2)]
+    selection.to_csv(outfile, index=False, sep='\t', header=None, quoting=csv.QUOTE_ALL)
+    # selection.to_excel(outfile)
     
 
 

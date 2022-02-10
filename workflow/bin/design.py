@@ -3,7 +3,7 @@
 
 from collections import defaultdict
 import json
-# import pdb
+import pdb
 from pathlib import Path
 
 import click
@@ -22,6 +22,7 @@ from primer.utils import (
     variant_context,
     common_variants,
     design_primers,
+    parse_design,
     log)
 
 
@@ -86,36 +87,32 @@ def get_me_some_primers(pname, prefix, query, method, config, data):
     # 5. Design primers
     design = design_primers(method, params, masked)
     # pdb.set_trace()
-    primers = {}
-    for i in range(params['n_return']):
-        
-        fwd_start, fwd_len = design[f'PRIMER_LEFT_{i}']
-        rev_start, rev_len = design[f'PRIMER_RIGHT_{i}']
-        
-        # c .. candidate
-        primers[f'{pname}::c{i}'] = {
-            'fwd': {
-                'start': fwd_start,
-                'end': fwd_start + fwd_len,
-                # 'sanity': template[fwd_start:fwd_start + fwd_len],
-                'sequence': design[f'PRIMER_LEFT_{i}_SEQUENCE'],
-                'Tm': round(design[f'PRIMER_LEFT_{i}_TM'], 2),
-            },
-            'rev': {
-                # That Python 0-based, end-exclusive indexing thing ...
-                'start': rev_start - rev_len + 1,
-                'end': rev_start + 1,
-                # 'sanity': rc(template[rev_start - rev_len + 1:rev_start + 1]),
-                'sequence': design[f'PRIMER_RIGHT_{i}_SEQUENCE'],
-                'Tm': round(design[f'PRIMER_RIGHT_{i}_TM'], 2),
-            },
-            'insert': design[f'PRIMER_PAIR_{i}_PRODUCT_SIZE'],
-            'penalty': round(design[f'PRIMER_PAIR_{i}_PENALTY'], 4),
-            'chromosome': chromosome,
-            'genomic_position': g_pos,
-        }
+    primers = parse_design(
+        design, params['n_return'], f'{pname}-round1', g_pos, chromosome, masked)
+
+
+    # Now we want to mask all positions against which the best primer has been
+    # designed to get another "unrelated" pair. Note: It might still be that
+    # the first primer has to be discarded due to non-unique binding.
+    first = primers[f'{pname}-round1::c0']
+
+    p1 = range(first['fwd']['start'], first['fwd']['end'])  # not + 1
+    p2 = range(first['rev']['start'], first['rev']['end'])  # not + 1
+
+    from itertools import chain
+    masked2 = ''.join(
+        ['N' if ix in chain(p1, p2) else i for ix, i in enumerate(masked)])
+
+    print(masked)
+    print(masked2)
+    print(first['fwd']['sequence'])
+    print(first['rev']['sequence'])
     
-    click.echo('\n' + log(f'Found {len(primers)} primer(s)'))
+    design2 = design_primers(method, params, masked2)
+    primers2 = parse_design(
+        design2, params['n_return'], f'{pname}-round2', g_pos, chromosome, masked2)
+
+    print('\n' + log(f'Found {len(primers)} primer(s)'))
     
 
     with open(f'{prefix}.template.fna', 'w+') as out:
@@ -123,21 +120,23 @@ def get_me_some_primers(pname, prefix, query, method, config, data):
 
 
     with open(f'{prefix}.json', 'w+') as out:
-        json.dump(primers, out, indent=4, sort_keys=True)
+        json.dump({**primers, **primers2}, out, indent=4, sort_keys=True)
     
     
     with open(f'{prefix}.tsv', 'w+') as out:
         for k, v in primers.items():
             out.write(f"{k}\t{v['fwd']['sequence']}\t{v['rev']['sequence']}\n")
+        for k, v in primers2.items():
+            out.write(f"{k}\t{v['fwd']['sequence']}\t{v['rev']['sequence']}\n")
 
 
-    with open(f'{prefix}.fna', 'w+') as out:
-        for k, v in primers.items():
-            out.write(f">{k}-fwd\n{v['fwd']['sequence']}\n")
-            out.write(f">{k}-rev\n{v['fwd']['sequence']}\n")
+    # with open(f'{prefix}.fna', 'w+') as out:
+    #     for k, v in primers.items():
+    #         out.write(f">{k}-fwd\n{v['fwd']['sequence']}\n")
+    #         out.write(f">{k}-rev\n{v['fwd']['sequence']}\n")
 
 
-    click.echo(log('Done. May the thermodynamic force be with you.'))
+    print(log('Done. May the thermodynamic force be with you.'))
 
 
 if __name__ == '__main__':

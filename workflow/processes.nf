@@ -1,5 +1,5 @@
 process design {
-    // publishDir "${params.results}/${name}", pattern: 'log.txt', mode: 'copy', overwrite: true
+    publishDir "${params.results}/${name}", pattern: 'log.txt', mode: 'copy', overwrite: true
     publishDir "${params.results}/${name}", pattern: "${name}.json", mode: 'copy', overwrite: true
     echo true
     errorStrategy 'ignore'
@@ -20,12 +20,13 @@ process design {
             val(method),
             path("${name}.json"),
             path("${name}.tsv"),
-            path("${name}.fna"),
             path('log.txt'))
 
     script:
     """
-    design.py -n ${name} -p ${name} -q '${variant}' -m ${method} -c ${config} -d ${data} 2> log.txt
+    design.py -n ${name} -p ${name} -q '${variant}' -m ${method} -c ${config} -d ${data} 2>&1 > log.txt
+
+    # Not sure why nf won't save the log when using 2> log.txt
     # Note the ' around the variant; otherwise will fail bc/ eg
     # NM_032682.6:c.484C>T would write to file T
     """
@@ -51,7 +52,7 @@ process pcr {
     file=$(jq -r '.reference' !{params.settings})
     reference=!{params.data}/${file}
     
-    isPcr $reference primers.tsv -maxSize=4000 -minPerfect=12 -minGood=12 -out=fa ispcr.fna
+    isPcr $reference primers.tsv -maxSize=4000 -minPerfect=15 -minGood=15 -out=fa ispcr.fna
     '''
 }
 
@@ -95,6 +96,6 @@ process cat {
         path("summary.tsv")
 
     """
-    cat ${results} > summary.tsv
+    cat ${results} | sort -k5,5 -k2,2 > summary.tsv
     """
 }
