@@ -103,31 +103,41 @@ def infer_coordinates(variant, db):
     return name, chromosome, g_pos
 
 
-def exon_boundaries(name, chromosome, g_pos, db):
+def exon_boundaries(db, name, chromosome, g_pos=None, exon=None):
     '''
+    Return exon boundaries either for a specified (transcript, exon) pair or
+    a genomic position.
+
+    Returns start and end coords in "Python space" so slicing works as expected.
+
     !grep 'exon-NM_000546.6-4' GRCh37_latest_genomic.gff
     NC_000017.10    BestRefSeq  exon    7579312 7579590 .   -   .   ID=exon-NM_000546.6-4;Parent=rna-NM_000546.6;Dbxref=GeneID:7157,Genbank:NM_000546.6,HGNC:HGNC:11998,MIM:191170;gbkey=mRNA;gene=TP53;product=tumor protein p53%2C transcript variant 1;tag=RefSeq Select;transcript_id=NM_000546.6
 
+    import gffutils
+    db = gffutils.FeatureDB('hg19-p13_annotation.db', keep_order=True)
+    ex = db['exon-NM_000546.6-4']
     ex
-    <Feature exon (NC_000017.10:7579312-7579590[-]) at 0x7ff39418fb50>
+    # <Feature exon (NC_000017.10:7579312-7579590[-]) at 0x7fb001c14b20>
     '''
-    g = db.region(region=(chromosome, g_pos, g_pos + 1), featuretype='exon')
-    exons = [i for i in g]
 
-    # A variant can be intronic, in which case we don't find any exon
-    if not exons:
-        return None
+    assert not all(g_pos, exon), 'Either specify genomic position or exon, not both, abort!'
+
+    if exon:
+        ex = db[f'exon-{tx}-{exon}']
 
     else:
-        for ex in exons:
-            # An exon can be part of multiple transcripts; choose the exon
-            # annotation particular to the transcript of interest. We assume
-            # that the exons of any particular transcript do not overlap.
-            if name in ex.id:
-                break
+        # Get all exons that cover the genomic position and select the one
+        # corresponding to the transcript <name>
+        g = db.region(region=(chromosome, g_pos, g_pos + 1), featuretype='exon')
+        exons = [i for i in g]
 
-    # To span an exon, we need Sanger pads and some search space for the 
-    # primers on both sides of the exon.
+        # A variant can be intronic, in which case we don't find any exon
+        if not exons:
+            return None
+        else:
+            ex = match_exon(name, exons)
+
+    # Get Python coords for intuitive sclicing later
     if ex.strand == '-':
         start = ex.start - 1
         end = ex.end
@@ -136,6 +146,16 @@ def exon_boundaries(name, chromosome, g_pos, db):
         end = ex.end + 1
 
     return ex, start, end
+
+
+
+def match_exon(name, exons):
+    for ex in exons:
+        # An exon can be part of multiple transcripts; choose the exon
+        # annotation particular to the transcript of interest. We assume
+        # that the exons of any particular transcript do not overlap.
+        if name in ex.id:
+            return ex
 
 
 def variant_context(name, genome, chromosome, g_pos, db, params):
@@ -149,7 +169,7 @@ def variant_context(name, genome, chromosome, g_pos, db, params):
     _, mx = params['size_range_PCR']
 
     try:
-        ex, start, end = exon_boundaries(name, chromosome, g_pos, db)
+        ex, start, end = exon_boundaries(db, name, chromosome, g_pos=g_pos)
         # Now put an amplicon-sized window across the mutation, such that the
         # mutation has enough space to both sides. Primer3 can later find 
         # primers in this window subject to the (mn, mx) constraints
@@ -309,3 +329,5 @@ def parse_design(design, n, pname, g_pos, chromosome, masked):
         }
 
     return primers
+
+
