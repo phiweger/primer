@@ -72,7 +72,7 @@ def get_me_some_primers(pname, prefix, query, method, config, data):
     
 
     # 3. Our PCR ideally spans the exon that contains the variant, but which exon?
-    template, boundaries = variant_context(
+    template, boundaries, constraints = variant_context(
         name, genome, chromosome, g_pos, db, params)
     
     
@@ -85,7 +85,7 @@ def get_me_some_primers(pname, prefix, query, method, config, data):
     
     
     # 5. Design primers
-    design = design_primers(method, params, masked)
+    design = design_primers(method, params, masked, constraints)
     # pdb.set_trace()
     primers = parse_design(
         design, params['n_return'], f'{pname}-round1', g_pos, chromosome, masked)
@@ -108,7 +108,7 @@ def get_me_some_primers(pname, prefix, query, method, config, data):
     print(first['fwd']['sequence'])
     print(first['rev']['sequence'])
     
-    design2 = design_primers(method, params, masked2)
+    design2 = design_primers(method, params, masked2, constraints)
     primers2 = parse_design(
         design2, params['n_return'], f'{pname}-round2', g_pos, chromosome, masked2)
 

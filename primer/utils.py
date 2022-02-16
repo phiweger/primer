@@ -1,5 +1,6 @@
 import datetime
 from difflib import get_close_matches
+from itertools import chain
 from math import floor
 import pdb
 # pdb.set_trace()
@@ -103,7 +104,7 @@ def infer_coordinates(variant, db):
     return name, chromosome, g_pos
 
 
-def exon_boundaries(db, name, chromosome, g_pos=None, exon=None):
+def retrieve_exon(db, name, chromosome, g_pos=None, exon=None):
     '''
     Return exon boundaries either for a specified (transcript, exon) pair or
     a genomic position.
@@ -120,7 +121,7 @@ def exon_boundaries(db, name, chromosome, g_pos=None, exon=None):
     # <Feature exon (NC_000017.10:7579312-7579590[-]) at 0x7fb001c14b20>
     '''
 
-    assert not all(g_pos, exon), 'Either specify genomic position or exon, not both, abort!'
+    assert not all([g_pos, exon]), 'Either specify genomic position or exon, not both, abort!'
 
     if exon:
         ex = db[f'exon-{tx}-{exon}']
@@ -137,16 +138,18 @@ def exon_boundaries(db, name, chromosome, g_pos=None, exon=None):
         else:
             ex = match_exon(name, exons)
 
+    return ex
+
+
+def pythonic_exon_boundaries(exon):
     # Get Python coords for intuitive sclicing later
-    if ex.strand == '-':
-        start = ex.start - 1
-        end = ex.end
+    if exon.strand == '-':
+        start = exon.start - 1
+        end = exon.end
     else:
-        start = ex.start
-        end = ex.end + 1
-
-    return ex, start, end
-
+        start = exon.start
+        end = exon.end + 1
+    return start, end
 
 
 def match_exon(name, exons):
@@ -159,7 +162,6 @@ def match_exon(name, exons):
 
 
 def variant_context(name, genome, chromosome, g_pos, db, params):
-
     # Primers need 18-30 nt and then we leave another 30 for Sanger "burn-in";
     # so we'll introduce a padding parameter
     # https://eu.idtdna.com/pages/support/faqs/what-is-the-optimal-length-of-a-primer-
@@ -168,19 +170,12 @@ def variant_context(name, genome, chromosome, g_pos, db, params):
     # Minimum, maximum amplicon size
     _, mx = params['size_range_PCR']
 
-    try:
-        ex, start, end = exon_boundaries(db, name, chromosome, g_pos=g_pos)
-        # Now put an amplicon-sized window across the mutation, such that the
-        # mutation has enough space to both sides. Primer3 can later find 
-        # primers in this window subject to the (mn, mx) constraints
+    if ex := retrieve_exon(db, name, chromosome, g_pos=g_pos):
         required = binding + pad + len(ex) + pad + binding
-    
-    except TypeError:
-        # TypeError: cannot unpack non-iterable NoneType object
-        # Don't ask for permission, ask for forgiveness
+    else:
+        # No exon annotated for the variant
         required = 1e10
         # Some insanely large value to trigger variant-centered primer design
-        # below.
 
     click.echo(log('Extracting target sequence; depending on chromosome size might take a while'))
     if mx > required:  # as in the sequence
@@ -189,11 +184,15 @@ def variant_context(name, genome, chromosome, g_pos, db, params):
         # Then fill up left and right to maximum amplicon size
         fill = floor((mx - required) / 2)
         
-        # See coordinate discussion above
-    
+        start, end = pythonic_exon_boundaries(ex)
         left  = start - pad - binding - fill
         right =   end + pad + binding + fill
-    
+
+        '''
+        Template:
+
+        left (fill, binding) (pad) start (exon) end (pad) (fill, binding) right
+        '''
         s = genome[chromosome][left:right].__str__()
         
         s1 = s[:binding + fill].upper()
@@ -202,9 +201,18 @@ def variant_context(name, genome, chromosome, g_pos, db, params):
         template = s1 + s2 + s3
         assert len(s) == len(template)
 
+        # Where is it acceptable to search for left and right primers, resp.?
+        # SEQUENCE_PRIMER_PAIR_OK_REGION_LIST
+        # https://primer3.ut.ee/primer3web_help.htm
+        r = fill + binding
+        left_search  = (1, r)
+        right_search = (len(template) - r, r)
+
     else:
         click.echo(log('Could not span exon'))
-        # We have to do something else
+        # Now put an amplicon-sized window across the mutation, such that the
+        # mutation has enough space to both sides. Primer3 can later find 
+        # primers in this window subject to the (mn, mx) constraints
         fill = floor((mx - (2 * pad)) / 2)
     
         left  = g_pos - pad - fill
@@ -218,7 +226,11 @@ def variant_context(name, genome, chromosome, g_pos, db, params):
         template = s1 + s2 + s3
         assert len(s) == len(template)
 
-    return template, (left, right)
+        r = fill
+        left_search  = (1, r)
+        right_search = (len(template) - r, r)
+
+    return template, (left, right), (left_search, right_search)
 
 
 def common_variants(template, chromosome, boundaries, variants):
@@ -244,7 +256,7 @@ def common_variants(template, chromosome, boundaries, variants):
     return masked
 
 
-def design_primers(method, params, masked):
+def design_primers(method, params, masked, constraints):
     '''
     # 'SEQUENCE_EXCLUDED_REGION'
     # https://primer3.org/manual.html#SEQUENCE_EXCLUDED_REGION
@@ -255,10 +267,18 @@ def design_primers(method, params, masked):
     # https://github.com/libnano/primer3-py/issues/18
     '''
     size_range = params[f'size_range_{method}']
-    
+
+    # https://primer3.ut.ee/primer3web_help.htm
+    # SEQUENCE_PRIMER_PAIR_OK_REGION_LIST=100,50,300,50 ; 900,60,, ; ,,930,100
+    (left_start, left_len), (right_start, right_len) = constraints
+    only_here = list(chain(*constraints))
+    # print(only_here)
+    # pdb.set_trace()
+
     spec =  [
         {
             'SEQUENCE_TEMPLATE': masked,
+            'SEQUENCE_PRIMER_PAIR_OK_REGION_LIST': only_here,
         },
         {
             'PRIMER_NUM_RETURN': params['n_return'],
@@ -283,6 +303,7 @@ def design_primers(method, params, masked):
             'PRIMER_SALT_MONOVALENT': params['salt_monovalent'],
             'PRIMER_SALT_DIVALENT': params['salt_divalent'],
             'PRIMER_DNTP_CONC': params['conc_dNTP'],
+            'PRIMER_DNA_CONC': params['conc_DNA'],
         }
     ]
 

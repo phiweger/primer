@@ -18,7 +18,8 @@
     "homopolymer_max_len": 4,
     "3prime_max_GC": 4,
     "Ns_max": 0,
-    "salt_monovalent": 50,
+    "salt_monovalent": 50.0,
     "salt_divalent": 1.5,
-    "conc_dNTP": 0.6
+    "conc_dNTP": 0.6,
+    "conc_DNA": 50.0
 }
