@@ -8,7 +8,7 @@ with open('README.md', 'r') as fh:
 
 
 setup(
-    name='primer',
+    name='primer4',
     version='0.1',
     author='Adrian Viehweger',
     author_email='foo@bar.com',

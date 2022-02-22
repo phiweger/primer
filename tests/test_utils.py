@@ -1,6 +1,6 @@
 import gffutils
 
-from primer.utils import infer_coordinates
+from primer4.utils import infer_coordinates
 
 
 '''
@@ -21,7 +21,7 @@ assert a == b
 '''
 
 
-
+'''
 
 # TODO: Add as fixture
 db = gffutils.FeatureDB(fp_annotation, keep_order=True)
@@ -48,3 +48,4 @@ def test_infer_coordinates():
     assert chromosome == 'NC_000017.10'
     assert g_pos == 7579472
     assert c_pos == 215
+'''

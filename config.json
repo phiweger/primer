@@ -2,6 +2,7 @@
     "reference": "GRCh37_latest_genomic.fna",
     "annotation": "hg19-p13_annotation.db",
     "variation": "GRCh37_latest_dbSNP_all.vcf.gz",
+    "coordinates": "cdot-0.2.1.refseq.grch37_grch38.json.gz",
     "n_return": 5,
     "burnin_sanger": 30,
     "binding_site": 50,

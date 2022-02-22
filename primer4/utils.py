@@ -7,7 +7,7 @@ import pdb
 import sys
 
 import click
-import hgvs.parser
+from hgvs.parser import Parser
 # https://github.com/biocommons/hgvs
 import primer3
 
@@ -32,7 +32,7 @@ def infer_coordinates(variant, db):
     - NM_000546.6
     - NM_138459.5
     '''
-    hp = hgvs.parser.Parser()
+    hp = Parser()
     try:
         v = hp.parse_hgvs_variant(variant)
     except hgvs.exceptions.HGVSParseError:
@@ -104,7 +104,7 @@ def infer_coordinates(variant, db):
     return name, chromosome, g_pos
 
 
-def retrieve_exon(db, name, chromosome, g_pos=None, exon=None):
+def retrieve_exon_around_variant(db, name, chromosome, g_pos):
     '''
     Return exon boundaries either for a specified (transcript, exon) pair or
     a genomic position.
@@ -120,25 +120,24 @@ def retrieve_exon(db, name, chromosome, g_pos=None, exon=None):
     ex
     # <Feature exon (NC_000017.10:7579312-7579590[-]) at 0x7fb001c14b20>
     '''
+    # Get all exons that cover the genomic position and select the one
+    # corresponding to the transcript <name>
+    g = db.region(region=(chromosome, g_pos, g_pos + 1), featuretype='exon')
+    exons = [i for i in g]
 
-    assert not all([g_pos, exon]), 'Either specify genomic position or exon, not both, abort!'
+    for ex in exons:
+        # An exon can be part of multiple transcripts; choose the exon
+        # annotation particular to the transcript of interest. We assume
+        # that the exons of any particular transcript do not overlap.
+        if name in ex.id:
+            return ex
 
-    if exon:
-        ex = db[f'exon-{tx}-{exon}']
+    # A variant can be intronic, in which case we don't find any exon
+    return None
 
-    else:
-        # Get all exons that cover the genomic position and select the one
-        # corresponding to the transcript <name>
-        g = db.region(region=(chromosome, g_pos, g_pos + 1), featuretype='exon')
-        exons = [i for i in g]
 
-        # A variant can be intronic, in which case we don't find any exon
-        if not exons:
-            return None
-        else:
-            ex = match_exon(name, exons)
-
-    return ex
+def retrieve_exon(db, name, exon):
+    return db[f'exon-{name}-{exon}']
 
 
 def pythonic_exon_boundaries(exon):
@@ -152,16 +151,36 @@ def pythonic_exon_boundaries(exon):
     return start, end
 
 
-def match_exon(name, exons):
-    for ex in exons:
-        # An exon can be part of multiple transcripts; choose the exon
-        # annotation particular to the transcript of interest. We assume
-        # that the exons of any particular transcript do not overlap.
-        if name in ex.id:
-            return ex
+def exon_context(name, exon, db, params):
+    # left in right out OR left out right in OR both in
+    mn, mx = params['size_range_qPCR']
+    binding = params['binding_site']
+
+    ex = retrieve_exon(db, name, exon)
+    start, end = pythonic_exon_boundaries(ex)
+
+    # TODO
+    if mn > len(ex):
+        pass
+    else:
+        pass
+
+    left  = start - binding
+    right =   end + binding
+    s = genome[ex.chrom][left:right].__str__()
+    
+    pass
+
 
 
 def variant_context(name, genome, chromosome, g_pos, db, params):
+    '''
+    Cases:
+
+    [x] exon spanned
+    [x] exon not spanned
+    [ ] exon lost and qPCR
+    '''
     # Primers need 18-30 nt and then we leave another 30 for Sanger "burn-in";
     # so we'll introduce a padding parameter
     # https://eu.idtdna.com/pages/support/faqs/what-is-the-optimal-length-of-a-primer-
@@ -170,7 +189,7 @@ def variant_context(name, genome, chromosome, g_pos, db, params):
     # Minimum, maximum amplicon size
     _, mx = params['size_range_PCR']
 
-    if ex := retrieve_exon(db, name, chromosome, g_pos=g_pos):
+    if ex := retrieve_exon_around_variant(db, name, chromosome, g_pos):
         required = binding + pad + len(ex) + pad + binding
     else:
         # No exon annotated for the variant
@@ -352,3 +371,59 @@ def parse_design(design, n, pname, g_pos, chromosome, masked):
     return primers
 
 
+def manual_c_to_g(tx, c, feature_db):
+    '''
+    Turn a coding variant into a genomic one
+
+    # NM_000546.6:c.215C>G
+    manual_c_to_g('NM_000546.6', 215, db)
+    # 7579472
+    '''
+    coding = []
+    for i in feature_db.children(
+        f'rna-{tx}', featuretype='CDS', order_by='start'):
+        coding.append(i)
+    
+    strand = feature_db[f'rna-{tx}'].strand
+    l = 0
+    if strand == '-':
+        coding = coding[::-1]  # reverse CDS order
+        
+        for i in coding:
+            if l + len(i) >= c:
+                break
+            else:
+                l += len(i)
+        # i.end holds genomic coordinate
+        g = i.end - (c - l) + 1
+    
+    else:
+        for i in coding:
+            if l + len(i) >= c:
+                break
+            else:
+                l += len(i)
+        g = i.start + c - 1
+    
+    return g
+
+
+def sync_tx_with_feature_db(tx, feature_db):
+    # Generate a list of valid IDs so we can validate input:
+    IDs = set(i.id.replace('rna-', '') for i in feature_db.features_of_type('mRNA'))
+
+    if not tx in IDs:
+        # m = get_close_matches(name, IDs)
+        q = tx.split('.')[0]
+    
+        ID_version = {k: v for k, v in [i.split('.') for i in IDs]}
+        v = ID_version[q]
+        name = f'{q}.{v}'
+        click.echo('\n' + log('Warning!\n'))
+        click.echo(f'Transcript ID not found, version mismatch? Will use {name} instead.')
+        # click.echo(f'Not what you want? How about: {m[0]}, {m[1]} or {m[2]}?')
+        chromosome = feature_db[f'rna-{name}'].chrom
+        return tx
+
+    else:
+        return tx
