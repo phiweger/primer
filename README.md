@@ -72,6 +72,18 @@ wget https://ftp.ncbi.nlm.nih.gov/refseq/H_sapiens/annotation/GRCh37_latest/refs
 gunip GRCh37_latest_dbSNP_all.vcf.gz
 bgzip -c GRCh37_latest_dbSNP_all.vcf > GRCh37_latest_dbSNP_all.vcf.gz
 tabix -p vcf GRCh37_latest_dbSNP_all.vcf.gz
+
+# https://genetools.org/SNPCheck/snpcheck.htm
+DB=ALL.wgs.phase3_shapeit2_mvncall_integrated_v5b.20130502.sites.vcf
+gunzip ${DB}.gz
+bgzip -c $DB > ${DB}.gz
+tabix -p vcf ${DB}.gz
+
+DB=ESP6500SI-V2-SSA137.GRCh38-liftover.snps_indels.vcf
+tar -xzvf ${DB}.tar.gz
+cat *.vcf > $DB
+bgzip -c $DB > ${DB}.gz
+tabix -p vcf ${DB}.gz
 ```
 
 

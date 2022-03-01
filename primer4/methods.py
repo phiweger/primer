@@ -1,7 +1,7 @@
 from primer4.space import context
 
 
-def sanger(template, params): 
+def sanger(template, feature_db, params): 
     '''
     mask_sanger(v, t, params)
     '''
@@ -10,7 +10,8 @@ def sanger(template, params):
 
     pad = burnin * 2 + 100
     # x2 bc/ burnin on both sides of variant, 100 is space to search primers in 
-    ex = context(v, db, 'exon')
+    variant = template.data
+    ex = context(variant, feature_db, 'exon')
     
     if ex and (len(ex) + pad < mx):
         # We can span the exon
@@ -21,8 +22,8 @@ def sanger(template, params):
         # Cannot span exon
         # center + pad, rest primer
         
-        lb = template.data.g_start - burnin
-        rb = template.data.g_end + burnin
+        lb = variant.g_start - burnin
+        rb = variant.g_end + burnin
 
     # Primer3 takes (start, length) constraints
     rlb = template.relative_pos(lb)

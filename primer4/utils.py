@@ -2,6 +2,7 @@ import datetime
 from difflib import get_close_matches
 from itertools import chain
 from math import floor
+from pathlib import Path
 import pdb
 # pdb.set_trace()
 import sys
@@ -10,6 +11,15 @@ import click
 from hgvs.parser import Parser
 # https://github.com/biocommons/hgvs
 import primer3
+
+
+# https://stackoverflow.com/questions/1270951/how-to-refer-to-relative-paths-of-resources-when-working-with-a-code-repository
+fn = Path(__file__).parents[1] / 'data/chrom_names.csv'
+chrom_names = {}
+with open(fn, 'r') as file:
+    for line in file:
+        k, v = line.strip().split(',')
+        chrom_names[k] = v
 
 
 def infer_coordinates(variant, db):
@@ -427,3 +437,13 @@ def sync_tx_with_feature_db(tx, feature_db):
 
     else:
         return tx
+
+
+def convert_chrom(chrom):
+    return chrom_names.get(chrom)
+
+
+
+
+
+

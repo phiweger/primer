@@ -1,4 +1,3 @@
-from itertools import chain
 import re
 
 import click
@@ -6,9 +5,16 @@ from gffutils.feature import Feature
 import hgvs
 from hgvs.assemblymapper import AssemblyMapper
 import pyfaidx
+from pysam import VariantFile
 
 from primer4.methods import sanger, qpcr, mrna
-from primer4.utils import log, manual_c_to_g, sync_tx_with_feature_db
+from primer4.space import pythonic_boundaries
+from primer4.utils import (
+    convert_chrom,
+    log,
+    manual_c_to_g,
+    sync_tx_with_feature_db
+    )
 
 
 class Variant():
@@ -153,36 +159,7 @@ Template:
 - applies sanger to var or qpcr/ splice to exon
 
 (decouple input from fn applied, bc/ n:n mapping)
-'''
 
-
-
-# TODO: Create different masks, which mark the template, then feed this to
-# uniform design fn
-
-
-
-
-data = {
-    'tx': 'NM_000546.6',
-    'type': 'variant',  # or exondelta
-    'chrom': 'NC_000017.10',
-    'start': 7578177,
-    'end': 7578179,
-    'apply': 'sanger',
-}
-
-
-# fn = {
-#     'sanger': mask_sanger,
-# }
-
-
-
-
-
-class Template():
-    '''
     t = Template(v, db)
     t.relative_pos(t.start)
     # 0
@@ -207,12 +184,17 @@ class Template():
 
     Template(v, db)
     Template(ed, db)
-    '''
-    def __init__(self, mutation, feature_db):
+'''
+class Template():
+    def __init__(self, mutation, feature_db, featuretype='exon'):
         self.data = mutation
         self.type = type(mutation)  # Template(v, db).type == Variant
         self.feat = feature_db[f'rna-{mutation.tx}']
+        self.region = feature_db.region(
+            region=(self.feat.chrom, self.feat.start, self.feat.end),
+            featuretype=featuretype)
         self.start, self.end = pythonic_boundaries(self.feat)
+        self.mask = set()
         self.methods = {
             'sanger': sanger,
             'qpcr':   qpcr,
@@ -223,6 +205,7 @@ class Template():
             'qpcr': ExonDelta,
             'mrna': ExonDelta,
         }
+        self.variation = {}
 
     def __repr__(self):
         return self.feat.__repr__()
@@ -230,6 +213,7 @@ class Template():
     def __len__(self):
         return len(self.feat)
 
+    # TODO: apply mask as fn
     def get_sequence(self, genome):
         s = genome[self.feat.chrom][self.start:self.end].__str__()
         # assert len(s) == len(self.feat)
@@ -239,82 +223,151 @@ class Template():
         # Primer3 needs positions relative to sequence
         return n - self.start
     
-    def apply(self, fn, params):
+    def apply(self, fn, feature_db, params):
         # Check that we apply the right fn to the right data type
         assert self.type == self.accepted.get(fn)
         # Apply fn
-        return self.methods[fn](self, params)
+        return self.methods[fn](self, feature_db, params)
+
+    def load_variation_(self, databases):
+        for name, db in databases.items():
+            variants = VariantFile(db)
+
+            # dbSNP names chromosomes like "NC_000007.13", others like "7"
+            if name != 'dbSNP':
+                chrom = convert_chrom(self.feat.chrom)
+            else:
+                chrom = self.feat.chrom
+            vv = variants.fetch(chrom, self.feat.start, self.feat.end)
+            self.variation[name] = vv
+
+            for i in vv:
+                # .info.get(...) raises ValueError: Invalid header if not there
+                info = dict(i.info)
+                
+                if name == 'dbSNP':
+                    if info.get('COMMON'):
+                        self.mask.add(i.pos - self.feat.start - 1)
+                
+                elif name == '1000Genomes':
+                    if info['AF'][0] >= 0.01:
+                        self.mask.add(i.pos - self.feat.start - 1)
+                
+                elif name == 'ESP':
+                    if float(info['MAF'][0]) >= 1:
+                        self.mask.add(i.pos - self.feat.start - 1)
+
+                else:
+                    print(f'"{name}" is not a valid variant database')
+        return None
+
+    def mask_sequence(self, genome, mask='N', unmasked=''):
+        s = self.get_sequence(genome)
+        
+        if unmasked:
+            masked = ''.join([mask if ix in self.mask else unmasked for ix, i in enumerate(s)])
+        else:
+            masked = ''.join([mask if ix in self.mask else i for ix, i in enumerate(s)])
+        return masked.upper()
+
+
+class PrimerPair():
+    '''
+    https://stackoverflow.com/questions/1305532/convert-nested-python-dict-to-object/9413295#9413295
+    '''
+    def __init__(self, d):
+        for a, b in d.items():
+            if isinstance(b, (list, tuple)):
+               setattr(self, a, [PrimerPair(x) if isinstance(x, dict) else x for x in b])
+            else:
+               setattr(self, a, PrimerPair(b) if isinstance(b, dict) else b)
+
+    def __repr__(self):
+        return f'{self.fwd.start}-{self.fwd.end}:{self.rev.start}-{self.rev.end}, loss: {self.penalty}'
+
 
 
 
 '''
+# cd tmp/primer/
+# conda activate primer
+# py
+import json
+
+from cdot.hgvs.dataproviders import JSONDataProvider
+import gffutils
+from pyfaidx import Fasta
+
+from primer4.models import Variant, Template
+from primer4.design import design_primers
+# pick_primers
+
+
+fp_data = '/Users/phi/Dropbox/repos/primer4/data'
+fp_config = '/Users/phi/Dropbox/repos/primer4/config.json'
+
+fp_genome = f'{fp_data}/GRCh37_latest_genomic.fna'
+fp_coords = f'{fp_data}/cdot-0.2.1.refseq.grch37_grch38.json.gz'
+fp_annotation = f'{fp_data}/hg19-p13_annotation.db'
+
+fp_snvs_1 = f'{fp_data}/GRCh37_latest_dbSNP_all.vcf.gz'
+fp_snvs_2 = f'{fp_data}/ALL.wgs.phase3_shapeit2_mvncall_integrated_v5b.20130502.sites.vcf.gz'
+fp_snvs_3 = f'{fp_data}/ESP6500SI-V2-SSA137.GRCh38-liftover.snps_indels.vcf.gz'
+
+
+genome = Fasta(fp_genome)
+hdp = JSONDataProvider([fp_coords])
+db = gffutils.FeatureDB(fp_annotation, keep_order=True)
+
 code = 'NM_000546.6:c.215C>G'
 method = 'sanger'
 
+with open(fp_config, 'r') as file:
+    params = json.load(file)
+
+
 v = Variant(code, hdp, db)
 tmp = Template(v, db)
-constraints = tmp.apply(method, params)
+constraints = tmp.apply(method, db, params)
 # ((0, 7544), (7882, 11188))
 # (250, 600)
 
-design_primers(tmp.get_sequence(genome), constraints, params)
+tmp.load_variation_({
+    'dbSNP': fp_snvs_1,
+    '1000Genomes': fp_snvs_2,
+    'ESP': fp_snvs_3
+    })
+
+
+masked = tmp.mask_sequence(genome)
+# tmp.mask_sequence(genome, unmasked='-')[:1000]
+
+primers = [p for p in next(design_primers(masked, constraints, params, []))]
+# [7461-7481:8019-8039, loss: 0.1454,
+#  7521-7541:8076-8096, loss: 0.2891,
+#  7408-7429:7940-7960, loss: 1.7632,
+#  7498-7520:7996-8017, loss: 4.1442]
+
+
+
 '''
 
 
-def design_primers(masked, constraints, params):
-    '''
-    # 'SEQUENCE_EXCLUDED_REGION'
-    # https://primer3.org/manual.html#SEQUENCE_EXCLUDED_REGION
-    
-    # 'SEQUENCE_INCLUDED_REGION'
-    
-    # 'PRIMER_PRODUCT_SIZE_RANGE'
-    # https://github.com/libnano/primer3-py/issues/18
-    '''
-    size_range = constraints['size_range']
 
-    # https://primer3.ut.ee/primer3web_help.htm
-    # SEQUENCE_PRIMER_PAIR_OK_REGION_LIST=100,50,300,50 ; 900,60,, ; ,,930,100
-    only_here = list(chain(*constraints['only_here']))
-    # print(only_here)
-    # pdb.set_trace()
 
-    spec =  [
-        {
-            'SEQUENCE_TEMPLATE': masked,
-            'SEQUENCE_PRIMER_PAIR_OK_REGION_LIST': only_here,
-        },
-        {
-            'PRIMER_NUM_RETURN': params['n_return'],
-            'PRIMER_MIN_SIZE': params['size_min'],
-            'PRIMER_OPT_SIZE': params['size_opt'],
-            'PRIMER_MAX_SIZE': params['size_max'],
-    
-            'PRIMER_MIN_TM': params['tm_min'],
-            'PRIMER_OPT_TM': params['tm_opt'],
-            'PRIMER_MAX_TM': params['tm_max'],
-            'PRIMER_MIN_GC': params['GC_min'],
-            'PRIMER_MAX_GC': params['GC_max'],
-    
-            'PRIMER_MAX_POLY_X': params['homopolymer_max_len'],
-            'PRIMER_MAX_END_GC': params['3prime_max_GC'],
-    
-            'PRIMER_MAX_NS_ACCEPTED': params['Ns_max'],
-            
-            'PRIMER_PRODUCT_SIZE_RANGE': [size_range],
-    
-            # defaults, here to be explicit
-            'PRIMER_SALT_MONOVALENT': params['salt_monovalent'],
-            'PRIMER_SALT_DIVALENT': params['salt_divalent'],
-            'PRIMER_DNTP_CONC': params['conc_dNTP'],
-            'PRIMER_DNA_CONC': params['conc_DNA'],
-        }
-    ]
 
-    # https://libnano.github.io/primer3-py/quickstart.html#workflow
-    design = primer3.bindings.designPrimers(*spec)
-    return design
 
+
+'''
+Problems encountered/ solved:
+
+- DSL
+- SNVs database preparations
+- SNVs different chromosome namings and options fields (AF vs. MAF vs. COMMON)
+- recursion necessary for multiple pairs (otherwise get 10000 takes forever but bc/ combinatorics still in the same place)
+- automatic transcript conversion (no tests yet)
+- test suite
+'''
 
 
 # -----------------------------------------------------------------------------
