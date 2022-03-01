@@ -11,10 +11,10 @@ from primer4.methods import sanger, qpcr, mrna
 from primer4.space import pythonic_boundaries
 from primer4.utils import (
     convert_chrom,
+    gc_map,
     log,
     manual_c_to_g,
-    sync_tx_with_feature_db
-    )
+    sync_tx_with_feature_db)
 
 
 class Variant():
@@ -206,6 +206,8 @@ class Template():
             'mrna': ExonDelta,
         }
         self.variation = {}
+        self.c_to_g, self.g_to_c = gc_map(mutation.tx, feature_db)
+        # TODO: Maybe duplicate code here to self.feat
 
     def __repr__(self):
         return self.feat.__repr__()
@@ -220,7 +222,7 @@ class Template():
         return s
 
     def relative_pos(self, n):
-        # Primer3 needs positions relative to sequence
+        # Primer3 needs positions relative to sequence (when masking etc.)
         return n - self.start
     
     def apply(self, fn, feature_db, params):
@@ -276,6 +278,8 @@ class PrimerPair():
     https://stackoverflow.com/questions/1305532/convert-nested-python-dict-to-object/9413295#9413295
     '''
     def __init__(self, d):
+        self.data = d
+
         for a, b in d.items():
             if isinstance(b, (list, tuple)):
                setattr(self, a, [PrimerPair(x) if isinstance(x, dict) else x for x in b])
@@ -285,6 +289,38 @@ class PrimerPair():
     def __repr__(self):
         return f'{self.fwd.start}-{self.fwd.end}:{self.rev.start}-{self.rev.end}, loss: {self.penalty}'
 
+    def to_g(self, template):
+        '''
+        Translate primer coords into genomics ones.
+        '''
+        fwd_start = template.feat.start + self.fwd.start
+        fwd_end   = template.feat.start + self.fwd.end
+        rev_start = template.feat.start + self.rev.start
+        rev_end   = template.feat.start + self.rev.end    
+    
+        return [fwd_start, fwd_end, rev_start, rev_end]
+
+    def to_c(self, template):
+        '''
+        Translate primer coords into coding ones.
+
+        TODO: Can take genomic position and query template for the start of
+        the closest exon, or pass spanned exon and calc distance then write
+        coding_start - difference.
+
+        If its on the exon, have this position, else return the start of the
+        exon?
+        '''
+        # TODO: Does not work if non-coding position
+        return [template.g_to_c[i] for i in self.to_g(template)]
+        '''
+        TODO: Get the closest coding position, then do +- x.
+        '''
+        # qry = 7579200
+        # nearest_g = min(tmp.g_to_c.keys(), key=lambda x: abs(x - qry))
+        # nearest_c = tmp.g_to_c[nearest_g]
+        # str(qry - nearest_g)  # -112
+        # TODO: start or end of primer reference here ie -132 oder -112
 
 
 
@@ -319,15 +355,18 @@ genome = Fasta(fp_genome)
 hdp = JSONDataProvider([fp_coords])
 db = gffutils.FeatureDB(fp_annotation, keep_order=True)
 
-code = 'NM_000546.6:c.215C>G'
-method = 'sanger'
-
 with open(fp_config, 'r') as file:
     params = json.load(file)
 
 
+code = 'NM_000546.6:c.215C>G'
+method = 'sanger'
+
+
 v = Variant(code, hdp, db)
 tmp = Template(v, db)
+assert tmp.c_to_g[v.start] == v.g_start
+
 constraints = tmp.apply(method, db, params)
 # ((0, 7544), (7882, 11188))
 # (250, 600)
@@ -348,14 +387,7 @@ primers = [p for p in next(design_primers(masked, constraints, params, []))]
 #  7408-7429:7940-7960, loss: 1.7632,
 #  7498-7520:7996-8017, loss: 4.1442]
 
-
-
 '''
-
-
-
-
-
 
 
 '''
@@ -367,6 +399,14 @@ Problems encountered/ solved:
 - recursion necessary for multiple pairs (otherwise get 10000 takes forever but bc/ combinatorics still in the same place)
 - automatic transcript conversion (no tests yet)
 - test suite
+
+
+also:
+
+visit mibi
+
+
+
 '''
 
 

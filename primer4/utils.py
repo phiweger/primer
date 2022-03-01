@@ -22,6 +22,10 @@ with open(fn, 'r') as file:
         chrom_names[k] = v
 
 
+def convert_chrom(chrom):
+    return chrom_names.get(chrom)
+
+
 def infer_coordinates(variant, db):
     '''
     Ah!
@@ -439,11 +443,23 @@ def sync_tx_with_feature_db(tx, feature_db):
         return tx
 
 
-def convert_chrom(chrom):
-    return chrom_names.get(chrom)
+def gc_map(tx, feature_db):
+    cnt, cum = 0, 0
+    map_ = {}
+    for i in feature_db.children(
+        f'rna-{tx}', featuretype='CDS', order_by='strand'):
+        cum += len(i)
 
+        r = range(i.start, i.end+1)
+        if i.strand == '-':
+            r = reversed(r)
+        
+        for j in r:
+            cnt += 1
+            map_[cnt] = j
 
-
+        assert max(map_.keys()) == cum
+    return map_, dict((v, k) for k, v in map_.items())
 
 
 
