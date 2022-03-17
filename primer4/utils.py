@@ -1,6 +1,6 @@
 import datetime
 from difflib import get_close_matches
-from itertools import chain
+from itertools import chain, zip_longest
 from math import floor
 from pathlib import Path
 import pdb
@@ -443,7 +443,10 @@ def sync_tx_with_feature_db(tx, feature_db):
         return tx
 
 
-def gc_map(tx, feature_db):
+def gc_map2(tx, feature_db):
+    '''
+    Map coding coordinates to genomic ones for easy lookup.
+    '''
     cnt, cum = 0, 0
     map_ = {}
     for i in feature_db.children(
@@ -462,4 +465,40 @@ def gc_map(tx, feature_db):
     return map_, dict((v, k) for k, v in map_.items())
 
 
+
+def gc_map(tx, feature_db):
+    '''
+    Map coding coordinates to genomic ones for easy lookup.
+    '''
+    cnt, cum = 0, 0
+    map_ = {}
+
+    tx = f'rna-{tx}'
+    
+    strand = feature_db[tx].strand
+    l = list(feature_db.children(tx, featuretype='CDS', order_by='start'))
+
+    if strand == '-':
+        l = l[::-1]
+
+    for i in l:  # r .. region
+        cum += len(i)
+        
+        r = range(i.start, i.end+1)
+        if i.strand == '-':
+            r = reversed(r)
+
+        for j in r:
+            cnt += 1
+            map_[cnt] = j
+
+    assert max(map_.keys()) == cum
+    return map_, dict((v, k) for k, v in map_.items())
+
+
+def twolists(l1, l2):
+    '''
+    https://stackoverflow.com/questions/48199961/   how-to-interleave-two-lists-of-different-length
+    '''
+    return [x for x in chain(*zip_longest(l1, l2)) if x is not None]
 

@@ -1,4 +1,5 @@
 from primer4.space import context
+from primer4.utils import twolists
 
 
 def sanger(template, feature_db, params): 
@@ -34,8 +35,47 @@ def sanger(template, feature_db, params):
     }
 
 
-def qpcr():
-    pass
+def qpcr(template, feature_db, params):
+    '''
+    qpcr(tmp, db, params, 5)
+    '''
+    mn, mx = params['size_range_qPCR']
+
+    exons = list(feature_db.children(
+        template.feat.id, featuretype='exon', order_by='start'))
+    introns = list(feature_db.interfeatures(exons))
+    l = twolists(exons, introns)
+    ix = [int(i.id.split('-')[-1]) if i.id else None for i in l]
+    mid = ix.index(template.data.exon)
+    left = mid - 1 
+    right = mid + 1
+
+    # left
+    rlb = template.relative_pos(l[left].start)  # rlb .. relative left bound
+    rmb = template.relative_pos(l[mid].start)  # rmb .. mid
+    cl = {
+        'only_here': (
+            (rlb, len(l[left])),
+            (rmb, len(l[mid]))
+            ),
+        'size_range': (mn, mx)
+    }
+    # right
+
+    rrb = template.relative_pos(l[right].start)  # rrb .. relative right bound
+    cr = {
+        'only_here': (
+            (rmb, len(l[mid])),
+            (rrb, len(l[right]))
+            ),
+        'size_range': (mn, mx)
+        }
+    return cl, cr
+
+
+
+
+
 
 
 def mrna():

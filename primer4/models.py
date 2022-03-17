@@ -151,6 +151,24 @@ class ExonDelta():
         return tx, True, AB
 
 
+
+class ExonSpread():
+    def __init__(self, transcript, exon1, exon2):
+        self.tx = transcript
+        self.exon1 = exon1
+        self.exon2 = exon2
+        self.data = (transcript, exon1, exon2)
+
+
+class SingleExon():
+    def __init__(self, transcript, exon):
+        self.tx = transcript
+        self.exon = exon
+        self.data = (transcript, exon)
+
+    def __repr__(self):
+        return f'{self.tx}, exon {self.exon}'
+
 '''
 Template:
 
@@ -190,9 +208,9 @@ class Template():
         self.data = mutation
         self.type = type(mutation)  # Template(v, db).type == Variant
         self.feat = feature_db[f'rna-{mutation.tx}']
-        self.region = feature_db.region(
+        self.region = list(feature_db.region(
             region=(self.feat.chrom, self.feat.start, self.feat.end),
-            featuretype=featuretype)
+            featuretype=featuretype))
         self.start, self.end = pythonic_boundaries(self.feat)
         self.mask = set()
         self.methods = {
@@ -223,13 +241,15 @@ class Template():
 
     def relative_pos(self, n):
         # Primer3 needs positions relative to sequence (when masking etc.)
+        # Turns genomic coordinate into relative one
         return n - self.start
     
-    def apply(self, fn, feature_db, params):
+    def apply(self, fn, feature_db, params, *args, **kwargs):
         # Check that we apply the right fn to the right data type
-        assert self.type == self.accepted.get(fn)
+        # TODO:
+        # assert self.type == self.accepted.get(fn)
         # Apply fn
-        return self.methods[fn](self, feature_db, params)
+        return self.methods[fn](self, feature_db, params, *args, **kwargs)
 
     def load_variation_(self, databases):
         for name, db in databases.items():
@@ -321,170 +341,4 @@ class PrimerPair():
         # nearest_c = tmp.g_to_c[nearest_g]
         # str(qry - nearest_g)  # -112
         # TODO: start or end of primer reference here ie -132 oder -112
-
-
-
-'''
-# cd tmp/primer/
-# conda activate primer
-# py
-import json
-
-from cdot.hgvs.dataproviders import JSONDataProvider
-import gffutils
-from pyfaidx import Fasta
-
-from primer4.models import Variant, Template
-from primer4.design import design_primers
-# pick_primers
-
-
-fp_data = '/Users/phi/Dropbox/repos/primer4/data'
-fp_config = '/Users/phi/Dropbox/repos/primer4/config.json'
-
-fp_genome = f'{fp_data}/GRCh37_latest_genomic.fna'
-fp_coords = f'{fp_data}/cdot-0.2.1.refseq.grch37_grch38.json.gz'
-fp_annotation = f'{fp_data}/hg19-p13_annotation.db'
-
-fp_snvs_1 = f'{fp_data}/GRCh37_latest_dbSNP_all.vcf.gz'
-fp_snvs_2 = f'{fp_data}/ALL.wgs.phase3_shapeit2_mvncall_integrated_v5b.20130502.sites.vcf.gz'
-fp_snvs_3 = f'{fp_data}/ESP6500SI-V2-SSA137.GRCh38-liftover.snps_indels.vcf.gz'
-
-
-genome = Fasta(fp_genome)
-hdp = JSONDataProvider([fp_coords])
-db = gffutils.FeatureDB(fp_annotation, keep_order=True)
-
-with open(fp_config, 'r') as file:
-    params = json.load(file)
-
-
-code = 'NM_000546.6:c.215C>G'
-method = 'sanger'
-
-
-v = Variant(code, hdp, db)
-tmp = Template(v, db)
-assert tmp.c_to_g[v.start] == v.g_start
-
-constraints = tmp.apply(method, db, params)
-# ((0, 7544), (7882, 11188))
-# (250, 600)
-
-tmp.load_variation_({
-    'dbSNP': fp_snvs_1,
-    '1000Genomes': fp_snvs_2,
-    'ESP': fp_snvs_3
-    })
-
-
-masked = tmp.mask_sequence(genome)
-# tmp.mask_sequence(genome, unmasked='-')[:1000]
-
-primers = [p for p in next(design_primers(masked, constraints, params, []))]
-# [7461-7481:8019-8039, loss: 0.1454,
-#  7521-7541:8076-8096, loss: 0.2891,
-#  7408-7429:7940-7960, loss: 1.7632,
-#  7498-7520:7996-8017, loss: 4.1442]
-
-'''
-
-
-'''
-Problems encountered/ solved:
-
-- DSL
-- SNVs database preparations
-- SNVs different chromosome namings and options fields (AF vs. MAF vs. COMMON)
-- recursion necessary for multiple pairs (otherwise get 10000 takes forever but bc/ combinatorics still in the same place)
-- automatic transcript conversion (no tests yet)
-- test suite
-
-
-also:
-
-visit mibi
-
-
-
-'''
-
-
-# -----------------------------------------------------------------------------
-
-'''
-hdp = JSONDataProvider(['cdot-0.2.1.refseq.grch37_grch38.json.gz'])
-db = gffutils.FeatureDB('/Users/phi/Dropbox/repos/primer/data/hg19-p13_annotation.db', keep_order=True)
-genome = Fasta('/Users/phi/Dropbox/repos/primer/data/GRCh37_latest_genomic.fna')
-
-
-import json
-with open('/Users/phi/Dropbox/repos/primer/config.json', 'r') as file:
-    params = json.load(file)
-
-
-# v = Variant('NM_015015.2:c.2441+1G>A', hdp, db)
-v = Variant('NM_000546.6:c.215C>G', hdp, db)
-# ex = context(v, db, 'exon')
-t = Template(v, db)
-
-# TODO: Template() needs to work w/ ('NM_000546.6', '4') exon coords, too
-# We have genomic coords in this case, so good.
-# -- Create another class Exon() and do have the same interface, but do the
-# manual coord conversion in there.
-
-# Actually, we can parse this rather easily:
-# 
-# g.(?_234567)_(345678_?)del           -- deleted exon is (234567, 345678)
-# c.(4071+1_4072-1)_(5154+1_5155-1)del -- deleted exon is (4072, 5154)
-# 
-# Genomic we can look up, coding we'd have to translate using existing code.
-
-
-
-constraints = mask_sanger(v, t, params)
-# TODO: the mask_x fn should not need the variant
-# ((0, 7544), (7882, 19070))
-design_primers('PCR', params, t.get_sequence(genome), constraints)
-
-
-# TODO design(search_space, template, params)
-
-
-
-method = 'mRNA'
-
-before = neighbor(ex, db, -1)
-after = neighbor(ex, db, 1)
-
-
-design(template, placements, mask, params)
-
-
-placements = set(
-    {'left': (10, 15), 'right': (45, 89)},
-    {'left': (45, 89), 'right': (91, 98)},
-    )
-
-# then pass each to primer3
-
-
-
-Target(v, ex, params, 'mRNA')
-
-'''
-
-
-
-
-
-
-
-
-##fileformat=VCFv4.2
-##fileDate=20210513
-##source=dbSNP
-##dbSNP_BUILD_ID=155
-##reference=GRCh37.p13
-##phasing=partial
 
