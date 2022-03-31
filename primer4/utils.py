@@ -11,6 +11,7 @@ import click
 from hgvs.parser import Parser
 # https://github.com/biocommons/hgvs
 import primer3
+from pysam import VariantFile
 
 
 # https://stackoverflow.com/questions/1270951/how-to-refer-to-relative-paths-of-resources-when-working-with-a-code-repository
@@ -501,4 +502,92 @@ def twolists(l1, l2):
     https://stackoverflow.com/questions/48199961/   how-to-interleave-two-lists-of-different-length
     '''
     return [x for x in chain(*zip_longest(l1, l2)) if x is not None]
+
+
+def load_variation(feat, databases):
+    '''
+    feat .. gffutils feature type
+    '''
+    mask = set()
+    for name, db in databases.items():
+        variants = VariantFile(db)
+
+        # dbSNP names chromosomes like "NC_000007.13", others like "7"
+        if name != 'dbSNP':
+            vv = variants.fetch(convert_chrom(feat.chrom), feat.start, feat.end)
+        else:
+            vv = variants.fetch(feat.chrom, feat.start, feat.end)
+
+        for i in vv:
+            # .info.get(...) raises ValueError: Invalid header if not there
+            info = dict(i.info)
+            
+            if name == 'dbSNP':
+                if info.get('COMMON'):
+                    mask.add(i.pos - feat.start - 1)
+            
+            elif name == '1000Genomes':
+                if info['AF'][0] >= 0.01:
+                    mask.add(i.pos - feat.start - 1)
+            
+            elif name == 'ESP':
+                if float(info['MAF'][0]) >= 1:
+                    mask.add(i.pos - feat.start - 1)
+
+            else:
+                print(f'"{name}" is not a valid variant database')
+    return mask
+
+
+def mask_sequence(seq, var, mask='N', unmasked=''):
+    
+    if unmasked:
+        masked = ''.join([mask if ix in var else unmasked for ix, i in enumerate(seq)])
+    else:
+        masked = ''.join([mask if ix in var else i for ix, i in enumerate(seq)])
+    return masked.upper()
+
+
+def reconstruct_mrna(tx, feature_db, genome, vardbs):
+    exons = {}
+    for e in feature_db.children(tx, featuretype='exon', order_by='start'):
+        exons[int(e.id.split('-')[-1])] = e
+
+    reconstruction = ''
+    coords = []
+    segmentation = []
+
+    # print(exons)
+    for k in sorted(exons.keys()):
+        ex = exons[k]
+        
+        # seq = ex.sequence(genome).upper()  # accounts for strand
+
+        #seq = sequence[ex.start:ex.end+1]
+        #print(sequence[:10], ex.start, ex.end)
+        
+        seq = ex.sequence(genome).upper()
+        if vardbs:
+            var = load_variation(ex, vardbs)
+            seq = mask_sequence(seq, var) 
+
+        reconstruction += seq
+        # Validated manually using screed that this considers strand, ie for "-"
+        # we get the revcomp sequence.
+    
+        pos = list(range(ex.start, ex.end+1))
+        if ex.strand == '-':
+            pos = list(reversed(pos))
+            # +1 bec intervals INCLUDE the last position, eg 7573008 below, but
+            # the reversed fn() excludes it:
+            # <Feature exon (NC_000017.10:7571739-7573008[-]) at 0x7fb7fe96eca0>
+            # list(reversed(range(ex.start, ex.end)))[0]   is 7573007
+            # list(reversed(range(ex.start, ex.end+1)))[0] is 7573008 
+        # print(len(pos), len(ex), len(seq))
+        assert len(pos) == len(ex) == len(seq)
+    
+        segmentation.extend([k] * len(seq))
+        coords.extend(pos)
+    
+    return reconstruction, exons, coords, segmentation
 

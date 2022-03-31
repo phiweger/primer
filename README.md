@@ -24,6 +24,9 @@ conda install -y -n primer -c bioconda nextflow && conda activate primer
 git clone https://github.com/phiweger/primer && cd primer
 mkdir data
 # ^ add data in there, see below
+
+# And some more dependencies
+conda install -y -c bioconda blast
 ```
 
 Then set the absolute (!) path to the data in `nextflow.config`. If you use other reference genomes/ annotations/ variant databases, you also have to adjust the filenames in `config.json`.
@@ -59,7 +62,12 @@ Below, we'll use the files corresponding to the human genome `hg19` (v13, [NCBI]
 # - GRCh37_latest_genomic.fna.gz.fai
 
 wget https://ftp.ncbi.nlm.nih.gov/refseq/H_sapiens/annotation/GRCh37_latest/refseq_identifiers/GRCh37_latest_genomic.fna.gz
-samtools faidx GRCh37_latest_genomic.fna.gz
+gunzip GRCh37_latest_genomic.fna.gz
+samtools faidx GRCh37_latest_genomic.fna
+
+# Blast index
+makeblastdb -in GRCh37_latest_genomic.fna -dbtype nucl
+# Adding sequences from FASTA; added 297 sequences in 39.731 seconds.
 ```
 
 

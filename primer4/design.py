@@ -1,5 +1,11 @@
-from itertools import chain
+from collections import defaultdict
+from itertools import chain, product
+from pathlib import Path
+import re
+import subprocess
+import tempfile
 
+import pandas as pd
 import primer3
 
 from primer4.models import PrimerPair
@@ -133,17 +139,103 @@ def sort_penalty(primers):
     return [k for k, v in sorted(loss.items(), key=lambda x: x[1])]
 
 
-# def remove_overlapping(primers, length):
-#     occupied = [0] * length
-#     for k, v in primers.items():
-#         for i in ['fwd', 'rev']:
-#             start, end = v[i]['start'], v[i]['end']
-#             overlap = sum(occupied[start:end])
-#             if overlap < 10:
-#                 print(k, i, overlap, v['penalty'])
-#             # Not +1, primer3 py package has pythonic coords
-#             for j in range(start, end + 1):
-#                 occupied[j] = 1
+def check_for_multiple_amplicons(primers, fp_genome, word_size=13, mx_evalue=10, mx_amplicon_len=4000, mx_amplicon_n=1, mn_matches=15):
+    '''
+    Params mostly from ISPCR from UCSC genome browser:
 
+    word_size = 13
+    mx_evalue = 10
+    mx_amplicon_len = 4000
+    mx_amplicon_n = 1  # pseudogene and unwanted amplification check
+    mn_matches = 15    # 3' matches
+    '''
+    tmpdir = tempfile.TemporaryDirectory()
+    p = tmpdir.name
 
+    for primer in primers:
+        primer.save(f'{p}/{primer.name}.fna')
+
+    fields = 'qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore nident btop sstrand'
+    steps = [
+        f'cat {p}/*.fna > {p}/pseudo.fna',
+        f'blastn -dust no -word_size {word_size} -evalue {mx_evalue} -outfmt "6 {fields}" -query {p}/pseudo.fna -db {fp_genome} -out {p}/result'
+    ]
+    '''
+    > The “Blast trace-back operations” (BTOP) string describes the alignment produced by BLAST. -- https://www.ncbi.nlm.nih.gov/books/NBK569862
+
+    Examples: 7AG39, 7A-39, 6-G-A41
+    '''
+    command = '; '.join(steps)
+    log = subprocess.run(command, capture_output=True, shell=True)
+    # print(log)
+
+    result = Path(p) / 'result'
+    df = pd.read_csv(result, sep='\t', names=fields.split(' '))
+    df = df.astype({'btop': str})
+
+    unique = set([i.split('.')[0] for i in df['qseqid']])
+    
+    cnt = defaultdict(int)
+    for u in unique:
+        fwd = [dict(v) for _, v in df[df['qseqid'] == f'{u}.fwd'].iterrows()]
+        rev = [dict(v) for _, v in df[df['qseqid'] == f'{u}.rev'].iterrows()]
+    
+        for i, j in product(fwd, rev):
+            try:
+                # Try to parse the number of 3' matches (get the last number)
+                # https://stackoverflow.com/questions/5320525/regular-expression-to-match-last-number-in-a-string
+                i_match = int(re.match(r'.*?(\d+)(?!.*\d)', i['btop']).group(1))
+                j_match = int(re.match(r'.*?(\d+)(?!.*\d)', j['btop']).group(1))
+            except ValueError:
+                # Gap or mismatch in last position, so cannot cast string to int
+                # invalid literal for int() with base 10: ...
+                continue
+    
+            # Same contig?
+            if not i['sseqid'] == j['sseqid']:
+                continue
+    
+            # Same chromosome and different strands?
+            fwd_strand, fwd_start = i['sstrand'], i['sstart']
+            rev_strand, rev_start = j['sstrand'], j['sstart']
+            
+            # Primers on different strands?
+            if not fwd_strand != rev_strand:
+                continue
+    
+            # Orientation right (otherwise polymerase walks in opposite directions)?
+            if fwd_strand == 'plus':
+                if not fwd_start < rev_start:
+                    continue
+            else:
+                if not fwd_start > rev_start:
+                    continue
+    
+            # Amplicon size?
+            if i['sstart'] > j['sstart']:
+                amplicon = i['sstart'] - j['send']
+            else:
+                amplicon = j['sstart'] - i['send']
+    
+            if all([
+                amplicon < mx_amplicon_len,
+                i_match >= mn_matches,
+                j_match >= mn_matches]):
+                
+                cnt[u] += 1
+                # print(i)
+                # print(j)
+                # print(amplicon)
+                # print(i['qseqid'], i['sseqid'], i['sstart'], i['send'])
+                # print(j['qseqid'], j['sseqid'], j['sstart'], j['send'])
+
+    # We should only find one pair for each, which is the amplicon we want.
+    results = []
+    for primer in primers:
+        if cnt[primer.name] <= mx_amplicon_n:
+            results.append(primer)
+        else:
+            print(f'Primer pair {primer.name} does not pass, amplicons calculated: {cnt[primer.name]}')
+    print(f'{len(results)}/{len(primers)} primer pairs pass all filters')
+    return results
 

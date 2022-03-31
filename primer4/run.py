@@ -7,13 +7,14 @@ from cdot.hgvs.dataproviders import JSONDataProvider
 import gffutils
 from pyfaidx import Fasta
 
-from primer4.models import Variant, ExonDelta, SingleExon, Template
-from primer4.design import design_primers
+from primer4.models import Variant, ExonDelta, SingleExon, ExonSpread, Template
+from primer4.design import design_primers, check_for_multiple_amplicons
+from primer4.utils import mask_sequence, reconstruct_mrna
 # pick_primers
 
 
-fp_data = '/Users/phi/Dropbox/repos/primer4/data'
-fp_config = '/Users/phi/Dropbox/repos/primer4/config.json'
+fp_data = '/path/to/primer4/data'
+fp_config = '/path/to/primer4/config.json'
 
 fp_genome = f'{fp_data}/GRCh37_latest_genomic.fna'
 fp_coords = f'{fp_data}/cdot-0.2.1.refseq.grch37_grch38.json.gz'
@@ -31,12 +32,18 @@ db = gffutils.FeatureDB(fp_annotation, keep_order=True)
 with open(fp_config, 'r') as file:
     params = json.load(file)
 
+vardbs = {
+    'dbSNP': fp_snvs_1,
+    '1000Genomes': fp_snvs_2,
+    'ESP': fp_snvs_3
+    }
+
 
 # Sanger
+method = 'sanger'
 code = 'NM_000546.6:c.215C>G'      # -- strand -, no offset
 # code = 'NM_015015.3:c.2441+1G>A'   # -- strand +, offset 1
 # code = 'NM_000546.6:c.672+3C>G'    # -- strand -, offset 3
-method = 'sanger'
 
 v = Variant(code, hdp, db)
 tmp = Template(v, db)
@@ -47,12 +54,11 @@ else:
     assert tmp.c_to_g[v.start] + v.start_offset == v.g_start
 # ((0, 7544), (7882, 11188))
 # (250, 600)
-tmp.load_variation_({
-    'dbSNP': fp_snvs_1,
-    '1000Genomes': fp_snvs_2,
-    'ESP': fp_snvs_3
-    })
-masked = tmp.mask_sequence(genome)
+tmp.load_variation_(vardbs)
+# masked = tmp.mask_sequence(genome)
+
+masked = mask_sequence(tmp.get_sequence(genome), tmp.mask)
+
 # tmp.mask_sequence(genome, unmasked='-')[:1000]
 constraints = tmp.apply(method, db, params)
 primers = [p for p in next(design_primers(masked, constraints, params, []))]
@@ -62,6 +68,8 @@ primers = [p for p in next(design_primers(masked, constraints, params, []))]
 #  7498-7520:7996-8017, loss: 4.1442]
 
 
+
+'''
 # qPCR, starting from HGVS code
 method = 'qpcr'
 code = 'NM_000546.6:c.(?_560-1)_(672+1_?)del'
@@ -77,291 +85,85 @@ primers = []
 for constraints in tmp.apply('qpcr', db, params, n_exon):
     x = [p for p in next(design_primers(masked, constraints, params, []))]
     primers.extend(x)
+'''
 
 
 # qPCR, starting from explicit exon annotation
 method = 'qpcr'
 # code = ('NM_000546.6', 5)
 code = ('NM_001145408.2', 6)
-v = SingleExon(*code)
 
+v = SingleExon(*code)
 tmp = Template(v, db)
-tmp.load_variation_({
-    'dbSNP': fp_snvs_1,
-    '1000Genomes': fp_snvs_2,
-    'ESP': fp_snvs_3
-    })
-masked = tmp.mask_sequence(genome)
+tmp.load_variation_(vardbs)
+# masked = tmp.mask_sequence(genome)
+masked = mask_sequence(tmp.get_sequence(genome), tmp.mask)
 
 primers = []
 for constraints in tmp.apply('qpcr', db, params):
     print(constraints)
     x = [p for p in next(design_primers(masked, constraints, params, []))]
     primers.extend(x)
-
-
-
-
-
+# [10527-10548:10612-10632, loss: 1.1868,
+#  10568-10592:10667-10686, loss: 5.3035,
+#  10860-10880:10990-11010, loss: 0.4314,
+#  10822-10842:10944-10964, loss: 2.2463,
+#  10783-10803:10896-10918, loss: 2.619]
 
 
 # mRNA
 
 # reconstruct mRNA as template
+# NM_000546.6:c.215C>G
+code = ('NM_000546.6', 6, 7)
+method = 'mrna'
 
-def get_mrna(tx, feature_db):
-    exons = {}
-    for e in feature_db.children(
-        f'rna-{tx}', featuretype='exon', order_by='start'):
-        exons[int(e.id.split('-')[-1])] = e
+v = ExonSpread(*code)
+tmp = Template(v, db)
 
-    reconstruction = ''
-    coords = []
-    segmentation = []
-
-    for k in sorted(exons.keys()):
-        ex = exons[k]
-        seq = ex.sequence(genome).upper()  # accounts for strand
-        reconstruction += seq
-        # Validated manually using screed that this considers strand, ie for "-"
-        # we get the revcomp sequence.
-    
-        pos = list(range(ex.start, ex.end+1))
-        if ex.strand == '-':
-            pos = list(reversed(pos))
-            # +1 bec intervals INCLUDE the last position, eg 7573008 below, but
-            # the reversed fn() excludes it:
-            # <Feature exon (NC_000017.10:7571739-7573008[-]) at 0x7fb7fe96eca0>
-            # list(reversed(range(ex.start, ex.end)))[0]   is 7573007
-            # list(reversed(range(ex.start, ex.end+1)))[0] is 7573008 
-        assert len(pos) == len(ex) == len(seq)
-    
-        segmentation.extend([k] * len(seq))
-        coords.extend(pos)
-    
-    return reconstruction, exons, coords, segmentation
-
-
-tx = 'NM_000546.6'
-a, b, c, d = get_mrna(tx, db)
-
-
-
-
-
-
-
+tmp.mrna = reconstruct_mrna(tmp.feat, db, genome, vardbs)
+constraints = tmp.apply('mrna', db, params)
+masked = tmp.mrna[0]
 '''
 As a sanity check I can the composed sequence in Blastn and it returned:
 "Homo sapiens tumor protein p53 (TP53), transcript variant 1, mRNA" with 100%
 identity and 100% query cover.
 '''
-
-
-def get_mrna(transcript, feature_db):
-
-
-
-
+primers = [p for p in next(design_primers(masked, constraints, params, []))]
+# [777-797:888-908, loss: 0.5132,
+#  706-727:816-836, loss: 1.474,
+#  735-755:861-879, loss: 6.427]
 
 
 
-# TODO: Have a universal translate fn that translates coords btw/ genomic, transcript, coding and relative -- these need to be object methods of the Template obj.
-
-
-for i in list(db.children(f'rna-{v.tx}', featuretype='CDS', order_by='start')):
-    print(i.frame)
+# primers.save('foo')
 
 
 
 
-def qpcr(template, feature_db, params):
-    '''
-    One primer inside the exon, one outside
-    '''
-    pass
+
 
 
 '''
-1 inside, 1 outside
+makeblastdb -in GRCh37_latest_genomic.fna -dbtype nucl
 
-should not be too difficult
-'''
+blastn -dust no -word_size 7 -evalue 10 -outfmt 6 -query ../test.fna -db GRCh37_latest_genomic.fna -out result
 
 
-s = mrna(tmp, db)
+import pandas as pd
+names = 'qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore'.split(' ')
+df = pd.read_csv('result', sep='\t', names=names)
 
+df[]
 
+> I have logic that does round-robin pairwise comparisons (i.e. compares every hit to every other hit) to determine if each hit pair could result in an amplicon (on same chromosome, opposite-stranded, perfect match at 3'-ends, plus-strand hit is upstream of minus-strand hit, are separated by <= 1000 bp).
 
-mrna = db[f'rna-{v.tx}']
 
-def get_exon(db, name, exon):
-    try:
-        return db[f'exon-{name}-{exon}']
-    except gffutils.exceptions.FeatureNotFoundError:
-        return None
+https://bioinformatics.stackexchange.com/questions/7262/hits-in-primer-blast-not-found-with-programmatic-blastn-query
+https://www.metagenomics.wiki/tools/blast/blastn-output-format-6
+https://www.metagenomics.wiki/tools/blast/megablast
 
-
-# https://pythonhosted.org/gffutils/autodocs/gffutils.FeatureDB.create_introns.html
-def get_intron(db, name, exon, relative=-1):
-
-
-
-qry = 3
-tx = v.tx
-
-ex = retrieve_exon(db, tx, qry)
-
-
-
-# https://github.com/seandavi/GFFutils#imputing-introns
-exons = {}
-
-for e in db.children('rna-NM_000546.6', featuretype='exon', order_by='start'):
-    exons[int(e.id.split('-')[-1])] = e
-
-mrna = ''
-for k in sorted(exons.keys()):
-    mrna += exons[k].sequence(genome)
-    # Validated manually using screed that this considers strand, ie for "-"
-    # we get the revcomp sequence.
-'''
-As a sanity check I can the composed sequence in Blastn and it returned:
-"Homo sapiens tumor protein p53 (TP53), transcript variant 1, mRNA" with 100%
-identity and 100% query cover.
-'''
-
-# qrna
-exons = list(db.children('rna-NM_000546.6', featuretype='exon', order_by='start'))
-introns = list(db.interfeatures(exons))
-# Naturally, we have more exons than introns
-assert len(exons) == len(introns) + 1
-
-
-
-
-l = twolists(exons, introns)
-ix = [int(i.id.split('-')[-1]) if i.id else None for i in l]
-
-ix.index(1)
-# and then l[20+1] and l[20-1]
-
-
-
-
-
-
-
-
-
-def qpcr(template, feature_db, params, n_exon):
-    '''
-    qpcr(tmp, db, params, 5)
-    '''
-    mn, mx = params['size_range_qPCR']
-
-    exons = list(feature_db.children(
-        template.feat.id, featuretype='exon', order_by='start'))
-    introns = list(feature_db.interfeatures(exons))
-    l = twolists(exons, introns)
-    ix = [int(i.id.split('-')[-1]) if i.id else None for i in l]
-    mid = ix.index(n_exon)
-    left = mid - 1 
-    right = mid + 1
-
-    l[left].start
-    rlb = template.relative_pos(l[left].start)  # rlb .. relative left bound
-    rmb = template.relative_pos(l[mid].start)  # rmb .. mid
-
-    return {
-        'only_here': (
-            (rlb, len(l[left])),
-            (rmb, len(l[mid]))
-            ),
-        'size_range': (mn, mx)
-        }
-
-
-'''
-db = gffutils.create_db(
-    fp, 
-    dbfn='hg19-p13_annotation.db',
-    force=True,
-    keep_order=True,
-    merge_strategy='merge',
-    sort_attribute_values=True)
-'''
-# https://github.com/daler/gffutils/issues/111
-introns = list(db.create_introns())
-# 819,463
-db.update(
-    introns,
-    disable_infer_transcripts=True,
-    disable_infer_genes=True,
-    verbose=True,
-    merge_strategy='merge')
-# backup=True
-
-
-# f'exon-{name}-{exon}
-# intron = db['exon-NR_026818.1-2', 'exon-NR_026818.1-3']
-
-
-def mrna(template, feature_db, params):
-    '''
-    One primer in exon 1, the other in exon 2
-    '''
-    pass
-
-
-def get_contraints(x):
-    return x.start, x.end - x.start
-
-
-
-# TODO: closest features
-# https://github.com/seandavi/GFFutils#closest-features
-
-
-'''
-input: just name exon for now, later bold on the syntax to parse automatically
-
-NM_000546.6, exon 6
-
-class mRNA()
-
-has a dict {1: (start, end)}
-
-then select exon + and - (exon +- 1)
-
-place primer there (constrains, see syntax of the primer3 param)
-
-possibility to select only one splice site (eg +1 or -1 if no arg take both)
-'''
-
-
-
-
-
-
-
-# -----------------------------------------------------------------------------
-
-
-'''
-Problems encountered/ solved:
-
-- DSL
-- SNVs database preparations
-- SNVs different chromosome namings and options fields (AF vs. MAF vs. COMMON)
-- recursion necessary for multiple pairs (otherwise get 10000 takes forever but bc/ combinatorics still in the same place)
-- automatic transcript conversion (no tests yet)
-- test suite
-
-
-also:
-
-visit mibi
+blastn -task megablast -dust no -word_size 15 -evalue 2 -outfmt "6 sam" -query ../test.fna -db GRCh37_latest_genomic.fna -out result -perc_identity 0.9 -strand both && cat result
 
 
 
@@ -370,68 +172,66 @@ visit mibi
 
 
 
-# -----------------------------------------------------------------------------
+# TODO: now back translate primer coord from blast
+
+
+results = check_for_multiple_amplicons(primers, fp_genome)
+
+tmp.g_to_c[7578213]
+
+
+
+
+
+
+
+'''
+TODO: 
+
+We now could use pybedtools 
+
+https://daler.github.io/pybedtools/index.html
+
+nearby = genes.closest(intergenic_snps, ...)
+
+if primer coord (start, end) in exon, use g_to_c, else use pybedtools get_closest and then minus the corresponding start coord
+
+nearby = genes.closest(intergenic
+'''
+
+
 
 '''
-hdp = JSONDataProvider(['cdot-0.2.1.refseq.grch37_grch38.json.gz'])
-db = gffutils.FeatureDB('/Users/phi/Dropbox/repos/primer/data/hg19-p13_annotation.db', keep_order=True)
-genome = Fasta('/Users/phi/Dropbox/repos/primer/data/GRCh37_latest_genomic.fna')
+{'qseqid': '0605c189-3b95-49ac-a4d3-bc52947a8f0c.fwd',
+ 'sseqid': 'NC_000002.11',
+ 'pident': 100.0,
+ 'length': 16,
+ 'mismatch': 0,
+ 'gapopen': 0,
+ 'qstart': 1,
+ 'qend': 16,
+ 'sstart': 71186481,
+...
 
-
-import json
-with open('/Users/phi/Dropbox/repos/primer/config.json', 'r') as file:
-    params = json.load(file)
-
-
-# v = Variant('NM_015015.2:c.2441+1G>A', hdp, db)
-v = Variant('NM_000546.6:c.215C>G', hdp, db)
-# ex = context(v, db, 'exon')
-t = Template(v, db)
-
-# TODO: Template() needs to work w/ ('NM_000546.6', '4') exon coords, too
-# We have genomic coords in this case, so good.
-# -- Create another class Exon() and do have the same interface, but do the
-# manual coord conversion in there.
-
-# Actually, we can parse this rather easily:
-# 
-# g.(?_234567)_(345678_?)del           -- deleted exon is (234567, 345678)
-# c.(4071+1_4072-1)_(5154+1_5155-1)del -- deleted exon is (4072, 5154)
-# 
-# Genomic we can look up, coding we'd have to translate using existing code.
+'''
 
 
 
-constraints = mask_sanger(v, t, params)
-# TODO: the mask_x fn should not need the variant
-# ((0, 7544), (7882, 19070))
-design_primers('PCR', params, t.get_sequence(genome), constraints)
+'''
+    tmp = tempfile.TemporaryDirectory()
+    p = tmp.name
+    print(f'Aligning {Path(target).name} to {Path(query).name}')
 
+    steps = [
+        f'foldseek createdb {target} {p}/targetDB',
+        f'foldseek createdb {query} {p}/queryDB',
+        f'foldseek search {p}/queryDB {p}/targetDB {p}/aln {p}/tmp -a --cov-mode {mode} --tmscore-threshold {minscore}',
+        f'foldseek aln2tmscore {p}/queryDB {p}/targetDB {p}/aln {p}/aln_tmscore',
+        f'foldseek createtsv {p}/queryDB {p}/targetDB {p}/aln_tmscore {p}/aln_tmscore.tsv'
+    ]
 
-# TODO design(search_space, template, params)
-
-
-
-method = 'mRNA'
-
-before = neighbor(ex, db, -1)
-after = neighbor(ex, db, 1)
-
-
-design(template, placements, mask, params)
-
-
-placements = set(
-    {'left': (10, 15), 'right': (45, 89)},
-    {'left': (45, 89), 'right': (91, 98)},
-    )
-
-# then pass each to primer3
-
-
-
-Target(v, ex, params, 'mRNA')
-
+    command = '; '.join(steps)
+    log = subprocess.run(command, capture_output=True, shell=True)
 '''
 
 
@@ -439,12 +239,4 @@ Target(v, ex, params, 'mRNA')
 
 
 
-
-
-##fileformat=VCFv4.2
-##fileDate=20210513
-##source=dbSNP
-##dbSNP_BUILD_ID=155
-##reference=GRCh37.p13
-##phasing=partial
 

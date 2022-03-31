@@ -1,5 +1,5 @@
 from primer4.space import context
-from primer4.utils import twolists
+from primer4.utils import twolists#, reconstruct_mrna
 
 
 def sanger(template, feature_db, params): 
@@ -73,10 +73,40 @@ def qpcr(template, feature_db, params):
     return cl, cr
 
 
+def mrna(template, feature_db, params):
+    if not template.mrna:
+        raise ValueError('Please reconstruct the mRNA first')
+    
+    mrna, exons, coords, labels = template.mrna
+
+    here = []
+    for exon in template.data.data[1:]:
+        x = [i for i, j in enumerate(labels) if j == exon]
+        mn, mx = min(x), max(x)
+        here.append((mn, mx-mn))
+
+    constraints = {
+        'only_here': tuple(here),
+        'size_range': tuple(params['size_range_mRNA'])
+    }
+
+    return constraints
 
 
+'''
+def mrna(template, feature_db, params):
+    mrna, exons, coords, labels = reconstruct_mrna(template.feat.id, feature_db)
 
+    here = []
+    for exon in template.data.data[1:]:
+        x = [i for i, j in enumerate(labels) if j == exon]
+        mn, mx = min(x), max(x)
+        here.append((mn, mx-mn))
 
+    constraints = {
+        'only_here': tuple(here),
+        'size_range': tuple(params['size_range_qPCR'])
+    }
 
-def mrna():
-    pass
+    return constraints
+'''

@@ -11,6 +11,7 @@
     "size_max": 27,
     "size_range_PCR": [250, 600],
     "size_range_qPCR": [80, 150],
+    "size_range_mRNA": [80, 600],
     "tm_min": 57.0,
     "tm_opt": 60.0,
     "tm_max": 63.0,

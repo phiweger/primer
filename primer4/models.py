@@ -1,4 +1,5 @@
 import re
+from uuid import uuid4
 
 import click
 from gffutils.feature import Feature
@@ -12,6 +13,7 @@ from primer4.space import pythonic_boundaries
 from primer4.utils import (
     convert_chrom,
     gc_map,
+    load_variation,
     log,
     manual_c_to_g,
     sync_tx_with_feature_db)
@@ -151,13 +153,15 @@ class ExonDelta():
         return tx, True, AB
 
 
-
 class ExonSpread():
     def __init__(self, transcript, exon1, exon2):
         self.tx = transcript
         self.exon1 = exon1
         self.exon2 = exon2
         self.data = (transcript, exon1, exon2)
+
+    def __repr__(self):
+        return f'{self.tx}, (exon {self.exon1} and {self.exon2})'
 
 
 class SingleExon():
@@ -226,6 +230,7 @@ class Template():
         self.variation = {}
         self.c_to_g, self.g_to_c = gc_map(mutation.tx, feature_db)
         # TODO: Maybe duplicate code here to self.feat
+        self.mrna = ()
 
     def __repr__(self):
         return self.feat.__repr__()
@@ -252,45 +257,17 @@ class Template():
         return self.methods[fn](self, feature_db, params, *args, **kwargs)
 
     def load_variation_(self, databases):
-        for name, db in databases.items():
-            variants = VariantFile(db)
-
-            # dbSNP names chromosomes like "NC_000007.13", others like "7"
-            if name != 'dbSNP':
-                chrom = convert_chrom(self.feat.chrom)
-            else:
-                chrom = self.feat.chrom
-            vv = variants.fetch(chrom, self.feat.start, self.feat.end)
-            self.variation[name] = vv
-
-            for i in vv:
-                # .info.get(...) raises ValueError: Invalid header if not there
-                info = dict(i.info)
-                
-                if name == 'dbSNP':
-                    if info.get('COMMON'):
-                        self.mask.add(i.pos - self.feat.start - 1)
-                
-                elif name == '1000Genomes':
-                    if info['AF'][0] >= 0.01:
-                        self.mask.add(i.pos - self.feat.start - 1)
-                
-                elif name == 'ESP':
-                    if float(info['MAF'][0]) >= 1:
-                        self.mask.add(i.pos - self.feat.start - 1)
-
-                else:
-                    print(f'"{name}" is not a valid variant database')
+        self.mask = load_variation(self.feat, databases)
         return None
 
-    def mask_sequence(self, genome, mask='N', unmasked=''):
-        s = self.get_sequence(genome)
+    # def mask_sequence(self, genome, mask='N', unmasked=''):
+    #     s = self.get_sequence(genome)
         
-        if unmasked:
-            masked = ''.join([mask if ix in self.mask else unmasked for ix, i in enumerate(s)])
-        else:
-            masked = ''.join([mask if ix in self.mask else i for ix, i in enumerate(s)])
-        return masked.upper()
+    #     if unmasked:
+    #         masked = ''.join([mask if ix in self.mask else unmasked for ix, i in enumerate(s)])
+    #     else:
+    #         masked = ''.join([mask if ix in self.mask else i for ix, i in enumerate(s)])
+    #     return masked.upper()
 
 
 class PrimerPair():
@@ -298,6 +275,7 @@ class PrimerPair():
     https://stackoverflow.com/questions/1305532/convert-nested-python-dict-to-object/9413295#9413295
     '''
     def __init__(self, d):
+        self.name = uuid4().__str__()
         self.data = d
 
         for a, b in d.items():
@@ -342,3 +320,7 @@ class PrimerPair():
         # str(qry - nearest_g)  # -112
         # TODO: start or end of primer reference here ie -132 oder -112
 
+    def save(self, fp):
+        with open(fp, 'w+') as out:
+            for i in ['fwd', 'rev']:
+                out.write(f'>{self.name}.{i}\n{self.data[i]["sequence"]}\n')
