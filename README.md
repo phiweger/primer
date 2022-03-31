@@ -36,6 +36,10 @@ Then set the absolute (!) path to the data in `nextflow.config`. If you use othe
 ## Run
 
 ```bash
+primer4 -i order.csv -d /path/to/primer4/data -p /path/to/primer4/config.json
+
+
+# DEPRECATED
 cat input.csv
 # name,method,variant
 # ABCA4_v1,PCR,NM_000350.3:c.4234C>T

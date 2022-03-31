@@ -40,8 +40,8 @@ setup(
     # https://click.palletsprojects.com/en/7.x/setuptools/#testing-the-script
     # https://click.palletsprojects.com/en/7.x/setuptools/#scripts-in-packages
     packages=find_packages(),
-    # entry_points='''
-    #     [console_scripts]
-    #     nanotext=nanotext.__main__:cli
-    # ''',
+    entry_points='''
+        [console_scripts]
+        primer4=primer4.run:main
+    ''',
 )
